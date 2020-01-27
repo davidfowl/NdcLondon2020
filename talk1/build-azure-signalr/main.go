@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/vmihailenco/msgpack"
 	"golang.org/x/net/websocket"
@@ -23,13 +25,8 @@ type negotiateResponse struct {
 }
 
 func main() {
-
-	var buf bytes.Buffer
-	encoder := msgpack.NewEncoder(&buf)
-	encoder.EncodeArrayLen(2)
-	encoder.EncodeInt(2)
-	encoder.EncodeString("")
-	fmt.Printf("MessageLength = %d", buf.Len())
+	c := make(chan *websocket.Conn)
+	var clients sync.Map
 
 	http.Handle("/server/", websocket.Server{
 		Handler: websocket.Handler(func(ws *websocket.Conn) {
@@ -39,7 +36,7 @@ func main() {
 				connectionID = getConnectionID()
 			}
 
-			severConnectionHandler(connectionID, ws)
+			severConnectionHandler(&clients, connectionID, ws, c)
 		}),
 	})
 
@@ -51,14 +48,78 @@ func main() {
 			connectionID = getConnectionID()
 		}
 
-		clientConnectionHandler(connectionID, ws)
+		clientConnectionHandler(&clients, connectionID, ws, c)
 	}))
 
 	http.ListenAndServe("localhost:8087", nil)
 }
 
-func severConnectionHandler(connectionID string, ws *websocket.Conn) {
+func processHandshake(ws *websocket.Conn) error {
 	var data []byte
+
+	if err := websocket.Message.Receive(ws, &data); err != nil {
+		return err
+	}
+
+	length, numBytes := decodeMessageLen(data)
+
+	fmt.Printf("Server Received: Length = %d\n", length)
+
+	decoder := msgpack.NewDecoder(bytes.NewReader(data[numBytes:]))
+	length, err := decoder.DecodeArrayLen()
+	if err != nil {
+		return err
+	}
+
+	messageType, err := decoder.DecodeInt32()
+	switch messageType {
+	case 1:
+		// Handshake
+		version, _ := decoder.DecodeInt32()
+
+		fmt.Printf("Protocol version: %d\n", version)
+
+		var buf bytes.Buffer
+		encoder := msgpack.NewEncoder(&buf)
+		encoder.EncodeArrayLen(2)
+		encoder.EncodeInt(2)
+		encoder.EncodeString("")
+
+		var message bytes.Buffer
+		lengthPrefix(&message, buf.Len())
+		buf.WriteTo(&message)
+
+		websocket.Message.Send(ws, message.Bytes())
+		break
+	}
+
+	return nil
+}
+
+func severConnectionHandler(clients *sync.Map, connectionID string, ws *websocket.Conn, c chan *websocket.Conn) {
+	var data []byte
+	pingMessage := []byte{2, 145, 3}
+
+	err := processHandshake(ws)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	ticker := time.NewTicker(10 * time.Second)
+	done := make(chan bool)
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				websocket.Message.Send(ws, pingMessage)
+			}
+		}
+	}()
+
+	c <- ws
 
 	for {
 		if err := websocket.Message.Receive(ws, &data); err != nil {
@@ -69,7 +130,6 @@ func severConnectionHandler(connectionID string, ws *websocket.Conn) {
 
 		fmt.Printf("Server Received: Length = %d\n", length)
 
-		// Handshake
 		decoder := msgpack.NewDecoder(bytes.NewReader(data[numBytes:]))
 		length, err := decoder.DecodeArrayLen()
 		if err != nil {
@@ -78,53 +138,82 @@ func severConnectionHandler(connectionID string, ws *websocket.Conn) {
 		}
 
 		messageType, err := decoder.DecodeInt32()
+
+		fmt.Printf("Server Received: MessageType = %d\n", messageType)
+
 		switch messageType {
-		case 1:
-			// Handshake
-			version, _ := decoder.DecodeInt32()
+		case 10: // Broadcast
+			// [10, ExcludedList, Payloads]
+			excludeListLen, err := decoder.DecodeArrayLen()
 
-			fmt.Printf("Protocol version: %d\n", version)
+			if err != nil {
+				fmt.Println(err)
+				break
+			}
 
-			// handshakeResponse, _ := msgpack.Marshal([2]interface{}{2, nil})
+			// Skip the exclude list for now
+			for index := 0; index < excludeListLen; index++ {
+				decoder.DecodeString()
+			}
 
-			// r := msgpack.NewDecoder(bytes.NewReader(handshakeResponse))
-			// hrl, _ := r.DecodeArrayLen()
-			// hmt, _ := r.DecodeInt16()
+			mapLen, err := decoder.DecodeMapLen()
 
-			//fmt.Printf("AL=%d\n", hrl)
-			// fmt.Printf("X=%d\n", hmt)
+			if err != nil {
+				fmt.Println(err)
+				break
+			}
 
-			// fmt.Printf("Len=%d, %d\n", len(handshakeResponse), len(lengthPrefix(len(handshakeResponse))))
+			// Assume it's a single protocol for now
+			fmt.Printf("Map has %d elements.\n", mapLen)
 
-			// x := lengthPrefix(len(handshakeResponse))
-			// dl, dn := decodeMessageLen(x)
+			protocol, err := decoder.DecodeString()
 
-			// fmt.Printf("Len=%d, %d\n", dl, dn)
+			if err != nil {
+				fmt.Println(err)
+				break
+			}
 
-			var buf bytes.Buffer
-			encoder := msgpack.NewEncoder(&buf)
-			encoder.EncodeArrayLen(2)
-			encoder.EncodeInt(2)
-			encoder.EncodeString("")
-			fmt.Printf("MessageLength = %d", buf.Len())
+			fmt.Printf("Broadcasting %s message\n", protocol)
 
-			var message bytes.Buffer
-			message.Write(lengthPrefix(buf.Len()))
-			buf.WriteTo(&message)
+			payload, err := decoder.DecodeBytes()
 
-			x := message.Bytes()
+			if err != nil {
+				fmt.Println(err)
+				break
+			}
 
-			ws.PayloadType = 0
+			fmt.Printf("Broadcasting payload size: %db\n", len(payload))
 
-			// fmt.Printf("Payload Type %d\n", t)
+			clients.Range(func(key, value interface{}) bool {
+				websocket.Message.Send(value.(*websocket.Conn), string(payload))
+				return true
+			})
 
-			ws.Write(x)
-			// x := len(handshakeResponse)
+			break
+		case 5: // Close connection
+			break
+		case 6: // ConnectionMessage
+			clientConnectionID, err := decoder.DecodeString()
 
-			// message := lengthPrefix(msgLength)
+			if err != nil {
+				fmt.Println(err)
+				break
+			}
 
-			// append(message, response)
+			payload, err := decoder.DecodeBytes()
 
+			if err != nil {
+				fmt.Println(err)
+				break
+			}
+
+			clientWs, ok := clients.Load(clientConnectionID)
+			if !ok {
+				break
+			}
+
+			// Assume text for now
+			websocket.Message.Send(clientWs.(*websocket.Conn), string(payload))
 			break
 		}
 	}
@@ -149,21 +238,15 @@ func decodeMessageLen(buffer []byte) (int, int) {
 	return length, numBytes
 }
 
-func lengthPrefix(length int) []byte {
-	var output [5]byte
-
-	var lenNumBytes = 0
+func lengthPrefix(buf *bytes.Buffer, length int) {
 	for length > 0 {
 		var current = (byte)(length & 0x7f)
-		output[lenNumBytes] = current
+		buf.WriteByte(current)
 		length >>= 7
 		if length > 0 {
 			current |= 0x80
 		}
-		lenNumBytes++
 	}
-
-	return output[0:lenNumBytes]
 }
 
 func min(x, y int) int {
@@ -173,15 +256,74 @@ func min(x, y int) int {
 	return y
 }
 
-func clientConnectionHandler(connectionID string, ws *websocket.Conn) {
+func clientConnectionHandler(clients *sync.Map, connectionID string, ws *websocket.Conn, c chan *websocket.Conn) {
 	var data []byte
+
+	// Wait for a server connection
+	target := <-c
+
+	clients.Store(connectionID, ws)
+
+	writeOpenConnectionMessage(connectionID, target)
+
 	for {
 		if err := websocket.Message.Receive(ws, &data); err != nil {
 			break
 		}
 
-		fmt.Println("Client Received " + string(data))
+		fmt.Printf("Client Received %d bytes\n", len(data))
+
+		writeConnectionMessage(connectionID, target, data)
 	}
+
+	writeCloseConnectionMessage(connectionID, target)
+
+	clients.Delete(connectionID)
+}
+
+func writeOpenConnectionMessage(connectionID string, ws *websocket.Conn) {
+	var buf bytes.Buffer
+	encoder := msgpack.NewEncoder(&buf)
+	encoder.EncodeArrayLen(3)
+	encoder.EncodeInt(4)
+	encoder.EncodeString(connectionID)
+	encoder.EncodeMapLen(0)
+
+	var message bytes.Buffer
+	lengthPrefix(&message, buf.Len())
+	buf.WriteTo(&message)
+
+	websocket.Message.Send(ws, message.Bytes())
+}
+
+func writeCloseConnectionMessage(connectionID string, ws *websocket.Conn) {
+	var buf bytes.Buffer
+	encoder := msgpack.NewEncoder(&buf)
+	encoder.EncodeArrayLen(3)
+	encoder.EncodeInt(5)
+	encoder.EncodeString(connectionID)
+	encoder.EncodeString("")
+
+	var message bytes.Buffer
+	lengthPrefix(&message, buf.Len())
+	buf.WriteTo(&message)
+
+	websocket.Message.Send(ws, message.Bytes())
+}
+
+func writeConnectionMessage(connectionID string, ws *websocket.Conn, data []byte) {
+	var buf bytes.Buffer
+	encoder := msgpack.NewEncoder(&buf)
+	encoder.EncodeArrayLen(3)
+	encoder.EncodeInt(6)
+	encoder.EncodeString(connectionID)
+	encoder.EncodeBytes(data)
+
+	var message bytes.Buffer
+	lengthPrefix(&message, buf.Len())
+	buf.WriteTo(&message)
+
+	websocket.Message.Send(ws, message.Bytes())
 }
 
 func negotiateHandler(w http.ResponseWriter, req *http.Request) {

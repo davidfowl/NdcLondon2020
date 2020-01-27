@@ -603,7 +603,170 @@ func negotiateHandler(w http.ResponseWriter, req *http.Request) {
 }
 ```
 
-# Handshake
+# Application -> Service Handshake
 
 ```go
+func processHandshake(ws *websocket.Conn) error {
+	var data []byte
+
+	if err := websocket.Message.Receive(ws, &data); err != nil {
+		return err
+	}
+
+	length, numBytes := decodeMessageLen(data)
+
+	fmt.Printf("Server Received: Length = %d\n", length)
+
+	decoder := msgpack.NewDecoder(bytes.NewReader(data[numBytes:]))
+	length, err := decoder.DecodeArrayLen()
+	if err != nil {
+		return err
+	}
+
+	messageType, err := decoder.DecodeInt32()
+	switch messageType {
+	case 1:
+		// Handshake
+		version, _ := decoder.DecodeInt32()
+
+		fmt.Printf("Protocol version: %d\n", version)
+
+		var buf bytes.Buffer
+		encoder := msgpack.NewEncoder(&buf)
+		encoder.EncodeArrayLen(2)
+		encoder.EncodeInt(2)
+		encoder.EncodeString("")
+
+		var message bytes.Buffer
+		lengthPrefix(&message, buf.Len())
+		buf.WriteTo(&message)
+
+		websocket.Message.Send(ws, message.Bytes())
+		break
+	}
+
+	return nil
+}
+
+func severConnectionHandler(connectionID string, ws *websocket.Conn) {
+	var data []byte
+
+	err := processHandshake(ws)
+
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	for {
+		if err := websocket.Message.Receive(ws, &data); err != nil {
+			break
+		}
+	}
+}
+
+func decodeMessageLen(buffer []byte) (int, int) {
+	length := 0
+	numBytes := 0
+
+	var header = buffer[0:min(5, len(buffer))]
+	var byteRead byte
+
+	for {
+		byteRead = header[numBytes]
+		length = int(uint(length) | uint(byteRead&0x7f)<<(numBytes*7))
+		numBytes++
+
+		if numBytes == len(header) || (byteRead&0x80) == 0 {
+			break
+		}
+	}
+	return length, numBytes
+}
+
+func lengthPrefix(buf *bytes.Buffer, length int) {
+	for length > 0 {
+		var current = (byte)(length & 0x7f)
+		buf.WriteByte(current)
+		length >>= 7
+		if length > 0 {
+			current |= 0x80
+		}
+	}
+}
+
+func min(x, y int) int {
+	if x < y {
+		return x
+	}
+	return y
+}
 ```
+
+# Service -> Application pings
+
+```go
+func severConnectionHandler(connectionID string, ws *websocket.Conn) {
+	var data []byte
+	pingMessage := []byte{2, 145, 3}
+
+	err := processHandshake(ws)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	ticker := time.NewTicker(10 * time.Second)
+	done := make(chan bool)
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				websocket.Message.Send(ws, pingMessage)
+			}
+		}
+	}()
+
+	for {
+		if err := websocket.Message.Receive(ws, &data); err != nil {
+			break
+		}
+
+		length, numBytes := decodeMessageLen(data)
+
+		fmt.Printf("Server Received: Length = %d\n", length)
+
+		decoder := msgpack.NewDecoder(bytes.NewReader(data[numBytes:]))
+		length, err := decoder.DecodeArrayLen()
+		if err != nil {
+			fmt.Println(err)
+			break
+		}
+
+		messageType, err := decoder.DecodeInt32()
+		switch messageType {
+		case 10: // Broadcast
+			break
+		}
+	}
+}
+```
+
+# Client connected/disconnect
+
+```go
+func clientConnectionHandler(connectionID string, ws *websocket.Conn) {
+	var data []byte
+	for {
+		if err := websocket.Message.Receive(ws, &data); err != nil {
+			break
+		}
+
+		fmt.Println("Client Received " + string(data))
+	}
+}
+```
+
+# Client message
