@@ -57,6 +57,7 @@ func main() {
 func processHandshake(ws *websocket.Conn) error {
 	var data []byte
 
+	// https://github.com/Azure/azure-signalr/blob/dev/specs/ServiceProtocol.md#handshakeresponse-message
 	if err := websocket.Message.Receive(ws, &data); err != nil {
 		return err
 	}
@@ -74,7 +75,6 @@ func processHandshake(ws *websocket.Conn) error {
 	messageType, err := decoder.DecodeInt32()
 	switch messageType {
 	case 1:
-		// Handshake
 		version, _ := decoder.DecodeInt32()
 
 		fmt.Printf("Protocol version: %d\n", version)
@@ -98,6 +98,7 @@ func processHandshake(ws *websocket.Conn) error {
 
 func severConnectionHandler(clients *sync.Map, connectionID string, ws *websocket.Conn, c chan *websocket.Conn) {
 	var data []byte
+	// https://github.com/Azure/azure-signalr/blob/dev/specs/ServiceProtocol.md#ping-message
 	pingMessage := []byte{2, 145, 3}
 
 	err := processHandshake(ws)
@@ -142,8 +143,8 @@ func severConnectionHandler(clients *sync.Map, connectionID string, ws *websocke
 		fmt.Printf("Server Received: MessageType = %d\n", messageType)
 
 		switch messageType {
-		case 10: // Broadcast
-			// [10, ExcludedList, Payloads]
+		case 10:
+			// https://github.com/Azure/azure-signalr/blob/dev/specs/ServiceProtocol.md#broadcastdata-message
 			excludeListLen, err := decoder.DecodeArrayLen()
 
 			if err != nil {
@@ -190,9 +191,11 @@ func severConnectionHandler(clients *sync.Map, connectionID string, ws *websocke
 			})
 
 			break
-		case 5: // Close connection
+		case 5:
+			// https://github.com/Azure/azure-signalr/blob/dev/specs/ServiceProtocol.md#closeconnection-message
 			break
-		case 6: // ConnectionMessage
+		case 6:
+			// https://github.com/Azure/azure-signalr/blob/dev/specs/ServiceProtocol.md#connectiondata-message
 			clientConnectionID, err := decoder.DecodeString()
 
 			if err != nil {
@@ -262,6 +265,7 @@ func clientConnectionHandler(clients *sync.Map, connectionID string, ws *websock
 	// Wait for a server connection
 	target := <-c
 
+	// Write the target connection back to the channel immediately
 	c <- target
 
 	clients.Store(connectionID, ws)
@@ -314,6 +318,7 @@ func writeCloseConnectionMessage(connectionID string, ws *websocket.Conn) {
 }
 
 func writeConnectionMessage(connectionID string, ws *websocket.Conn, data []byte) {
+
 	var buf bytes.Buffer
 	encoder := msgpack.NewEncoder(&buf)
 	encoder.EncodeArrayLen(3)
@@ -329,7 +334,7 @@ func writeConnectionMessage(connectionID string, ws *websocket.Conn, data []byte
 }
 
 func negotiateHandler(w http.ResponseWriter, req *http.Request) {
-	// CORS..
+	// CORS
 	if req.Method == "OPTIONS" {
 		// Pre-flight
 		w.Header().Add("Access-Control-Allow-Origin", req.Header.Get("origin"))

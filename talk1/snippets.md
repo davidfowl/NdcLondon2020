@@ -757,15 +757,81 @@ func severConnectionHandler(connectionID string, ws *websocket.Conn) {
 # Client connected/disconnect
 
 ```go
-func clientConnectionHandler(connectionID string, ws *websocket.Conn) {
+func main() {
+	c := make(chan *websocket.Conn, 1)
+	var clients sync.Map
+
+	http.Handle("/server/", websocket.Server{
+		Handler: websocket.Handler(func(ws *websocket.Conn) {
+			...
+
+			severConnectionHandler(&clients, connectionID, ws, c)
+		}),
+	})
+
+	http.HandleFunc("/client/negotiate", negotiateHandler)
+	http.Handle("/client/", websocket.Handler(func(ws *websocket.Conn) {
+		...
+
+		clientConnectionHandler(&clients, connectionID, ws, c)
+	}))
+
+	...
+}
+```
+
+```go
+func severConnectionHandler(clients *sync.Map, connectionID string, ws *websocket.Conn, c chan *websocket.Conn) {
 	var data []byte
+	pingMessage := []byte{2, 145, 3}
+
+	err := processHandshake(ws)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	ticker := time.NewTicker(10 * time.Second)
+	done := make(chan bool)
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				websocket.Message.Send(ws, pingMessage)
+			}
+		}
+	}()
+
+	c <- ws
+
+	...
+}
+
+func clientConnectionHandler(clients *sync.Map, connectionID string, ws *websocket.Conn, c chan *websocket.Conn) {
+	var data []byte
+
+	// Wait for a server connection
+	target := <-c
+
+	c <- target
+
+	clients.Store(connectionID, ws)
+
+	writeOpenConnectionMessage(connectionID, target)
+
 	for {
 		if err := websocket.Message.Receive(ws, &data); err != nil {
 			break
 		}
 
-		fmt.Println("Client Received " + string(data))
+		fmt.Printf("Client Received %d bytes\n", len(data))
 	}
+
+	writeCloseConnectionMessage(connectionID, target)
+
+	clients.Delete(connectionID)
 }
 
 func writeOpenConnectionMessage(connectionID string, ws *websocket.Conn) {
@@ -800,3 +866,143 @@ func writeCloseConnectionMessage(connectionID string, ws *websocket.Conn) {
 ```
 
 # Client message
+
+```go
+func clientConnectionHandler(clients *sync.Map, connectionID string, ws *websocket.Conn, c chan *websocket.Conn) {
+	...
+
+	target := <-c
+
+	...
+
+	for {
+		if err := websocket.Message.Receive(ws, &data); err != nil {
+			break
+		}
+
+		fmt.Printf("Client Received %d bytes\n", len(data))
+
+		writeOpenConnectionMessage(connectionID, target)
+	}
+
+	...
+}
+
+func writeOpenConnectionMessage(connectionID string, ws *websocket.Conn) {
+	var buf bytes.Buffer
+	encoder := msgpack.NewEncoder(&buf)
+	encoder.EncodeArrayLen(3)
+	encoder.EncodeInt(4)
+	encoder.EncodeString(connectionID)
+	encoder.EncodeMapLen(0)
+
+	var message bytes.Buffer
+	lengthPrefix(&message, buf.Len())
+	buf.WriteTo(&message)
+
+	websocket.Message.Send(ws, message.Bytes())
+}
+```
+
+# Application -> Service messages, single connection
+
+```go
+func severConnectionHandler(clients *sync.Map, connectionID string, ws *websocket.Conn, c chan *websocket.Conn) {
+	...
+
+	for {
+		...
+
+		switch messageType {
+		...
+		case 6: // ConnectionMessage
+			clientConnectionID, err := decoder.DecodeString()
+
+			if err != nil {
+				fmt.Println(err)
+				break
+			}
+
+			payload, err := decoder.DecodeBytes()
+
+			if err != nil {
+				fmt.Println(err)
+				break
+			}
+
+			clientWs, ok := clients.Load(clientConnectionID)
+			if !ok {
+				break
+			}
+
+			// Assume text for now
+			websocket.Message.Send(clientWs.(*websocket.Conn), string(payload))
+			break
+		}
+	}
+}
+```
+
+
+# Application -> Service messages, broadcast
+
+```go
+func severConnectionHandler(clients *sync.Map, connectionID string, ws *websocket.Conn, c chan *websocket.Conn) {
+	...
+
+	for {
+		...
+
+		switch messageType {
+		case 10: // Broadcast
+			// [10, ExcludedList, Payloads]
+			excludeListLen, err := decoder.DecodeArrayLen()
+
+			if err != nil {
+				fmt.Println(err)
+				break
+			}
+
+			// Skip the exclude list for now
+			for index := 0; index < excludeListLen; index++ {
+				decoder.DecodeString()
+			}
+
+			mapLen, err := decoder.DecodeMapLen()
+
+			if err != nil {
+				fmt.Println(err)
+				break
+			}
+
+			// Assume it's a single protocol for now
+			fmt.Printf("Map has %d elements.\n", mapLen)
+
+			protocol, err := decoder.DecodeString()
+
+			if err != nil {
+				fmt.Println(err)
+				break
+			}
+
+			fmt.Printf("Broadcasting %s message\n", protocol)
+
+			payload, err := decoder.DecodeBytes()
+
+			if err != nil {
+				fmt.Println(err)
+				break
+			}
+
+			fmt.Printf("Broadcasting payload size: %db\n", len(payload))
+
+			clients.Range(func(key, value interface{}) bool {
+				websocket.Message.Send(value.(*websocket.Conn), string(payload))
+				return true
+			})
+
+			break
+		}
+	}
+}
+```
