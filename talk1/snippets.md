@@ -767,6 +767,36 @@ func clientConnectionHandler(connectionID string, ws *websocket.Conn) {
 		fmt.Println("Client Received " + string(data))
 	}
 }
+
+func writeOpenConnectionMessage(connectionID string, ws *websocket.Conn) {
+	var buf bytes.Buffer
+	encoder := msgpack.NewEncoder(&buf)
+	encoder.EncodeArrayLen(3)
+	encoder.EncodeInt(4)
+	encoder.EncodeString(connectionID)
+	encoder.EncodeMapLen(0)
+
+	var message bytes.Buffer
+	lengthPrefix(&message, buf.Len())
+	buf.WriteTo(&message)
+
+	websocket.Message.Send(ws, message.Bytes())
+}
+
+func writeCloseConnectionMessage(connectionID string, ws *websocket.Conn) {
+	var buf bytes.Buffer
+	encoder := msgpack.NewEncoder(&buf)
+	encoder.EncodeArrayLen(3)
+	encoder.EncodeInt(5)
+	encoder.EncodeString(connectionID)
+	encoder.EncodeString("")
+
+	var message bytes.Buffer
+	lengthPrefix(&message, buf.Len())
+	buf.WriteTo(&message)
+
+	websocket.Message.Send(ws, message.Bytes())
+}
 ```
 
 # Client message

@@ -25,7 +25,7 @@ type negotiateResponse struct {
 }
 
 func main() {
-	c := make(chan *websocket.Conn)
+	c := make(chan *websocket.Conn, 1)
 	var clients sync.Map
 
 	http.Handle("/server/", websocket.Server{
@@ -261,6 +261,8 @@ func clientConnectionHandler(clients *sync.Map, connectionID string, ws *websock
 
 	// Wait for a server connection
 	target := <-c
+
+	c <- target
 
 	clients.Store(connectionID, ws)
 
