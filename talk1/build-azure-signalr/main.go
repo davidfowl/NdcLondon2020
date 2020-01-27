@@ -288,6 +288,7 @@ func clientConnectionHandler(clients *sync.Map, connectionID string, ws *websock
 }
 
 func writeOpenConnectionMessage(connectionID string, ws *websocket.Conn) {
+	// https://github.com/Azure/azure-signalr/blob/dev/specs/ServiceProtocol.md#openconnection-message
 	var buf bytes.Buffer
 	encoder := msgpack.NewEncoder(&buf)
 	encoder.EncodeArrayLen(3)
@@ -303,6 +304,7 @@ func writeOpenConnectionMessage(connectionID string, ws *websocket.Conn) {
 }
 
 func writeCloseConnectionMessage(connectionID string, ws *websocket.Conn) {
+	// https://github.com/Azure/azure-signalr/blob/dev/specs/ServiceProtocol.md#closeconnection-message
 	var buf bytes.Buffer
 	encoder := msgpack.NewEncoder(&buf)
 	encoder.EncodeArrayLen(3)
@@ -318,7 +320,7 @@ func writeCloseConnectionMessage(connectionID string, ws *websocket.Conn) {
 }
 
 func writeConnectionMessage(connectionID string, ws *websocket.Conn, data []byte) {
-
+	// https://github.com/Azure/azure-signalr/blob/dev/specs/ServiceProtocol.md#connectiondata-message
 	var buf bytes.Buffer
 	encoder := msgpack.NewEncoder(&buf)
 	encoder.EncodeArrayLen(3)
