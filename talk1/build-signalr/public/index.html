@@ -1,0 +1,51 @@
+<html>
+
+<body>
+    <input type="text" id="message" />
+    <input type="button" value="Send" id="send" />
+    <input type="button" value="Stream" id="stream" />
+    <ul id="messages">
+    </ul>
+
+    <script src="js/signalr.js"></script>
+    <script>
+        (async function () {
+            var connection = new signalR.HubConnectionBuilder()
+                .configureLogging(signalR.LogLevel.Debug)
+                .withUrl('/chat')
+                .build();
+
+            document.getElementById('send').addEventListener('click', () => {
+                var val = document.getElementById('message').value;
+                if (val) {
+                    connection.invoke('send', val);
+                }
+            });
+
+            document.getElementById('stream').addEventListener('click', () => {
+                connection.stream('stream').subscribe({
+                    next: (item) => {
+                        var li = document.createElement('li');
+                        li.innerText = 'item ' + item;
+                        document.getElementById('messages').appendChild(li);
+                    },
+                    complete: () => {
+                        var li = document.createElement('li');
+                        li.innerText = 'complete';
+                        document.getElementById('messages').appendChild(li);
+                    }
+                });
+            });
+
+            connection.on('send', message => {
+                var li = document.createElement('li');
+                li.innerText = message;
+                document.getElementById('messages').appendChild(li);
+            });
+
+            await connection.start();
+        })();
+    </script>
+</body>
+
+</html>
