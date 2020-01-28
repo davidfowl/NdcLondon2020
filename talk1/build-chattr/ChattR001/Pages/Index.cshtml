@@ -1,0 +1,88 @@
+﻿@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Home page";
+}
+
+<div class="text-center">
+    <h1 class="display-4">ChattR</h1>
+    <form class="needs-validation mb-5" id="chatForm" novalidate>
+        <div class="form-row justify-content-center">
+            <div class="input-group col-md-4">
+                <input type="text" id="message" class="form-control" required />
+                <div class="invalid-tooltip">
+                    Please enter a message to send.
+                </div>
+                <div class="input-group-append">
+                    <input type="submit" value="Send" id="send" class="btn btn-primary" />
+                    <input type="button" value="Stream" id="stream" class="btn btn-secondary" />
+                </div>
+            </div>
+        </div>
+    </form>
+
+    
+    <ul id="messages" class="list-group">
+    </ul>
+</div>
+
+@section Scripts {
+    <script src="~/lib/jquery/dist/jquery.min.js"></script>
+    <script src="~/lib/bootstrap/dist/js/bootstrap.min.js"></script>
+    <script src="~/lib/signalr/dist/browser/signalr.min.js"></script>
+    <script>
+        (async function () {
+            let connection = new signalR.HubConnectionBuilder()
+                .configureLogging(signalR.LogLevel.Debug)
+                .withUrl('/chat')
+                .build();
+
+            var form = document.getElementById('chatForm');
+            form.addEventListener('submit', event => {
+                form.classList.add('was-validated');
+
+                if (form.checkValidity() === true) {
+                    let val = document.getElementById('message').value;
+                    if (val) {
+                        connection.invoke('send', val);
+                        form.classList.remove('was-validated');
+                    }
+                }
+                
+                event.preventDefault();
+                event.stopPropagation();
+            }, false);
+
+            document.getElementById('stream').addEventListener('click', () => {
+                connection.stream('stream').subscribe({
+                    next: (item) => {
+                        addMessage('item ' + item, 'list-group-item-light');
+                    },
+                    complete: () => {
+                        addMessage('complete', 'list-group-item-light');
+                    }
+                });
+            }, false);
+
+            connection.on('send', message => {
+                addMessage(message);
+            });
+
+            function addMessage(message, className) {
+                let li = document.createElement('li');
+                li.classList.add('list-group-item');
+                li.classList.add('list-group-item-success');
+                li.innerText = message;
+                document.getElementById('messages').appendChild(li);
+                window.setTimeout(() => {
+                    li.classList.remove('list-group-item-success');
+                    if (className) {
+                        li.classList.add(className);
+                    }
+                }, 250)
+            }
+
+            await connection.start();
+        })();
+    </script>
+}
