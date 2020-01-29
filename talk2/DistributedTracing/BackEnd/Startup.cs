@@ -45,6 +45,7 @@ namespace BackEnd
             {
                 endpoints.MapGet("/", async context =>
                 {
+                    await Task.Delay(2000);
                     await context.Response.WriteAsync("Hello BackEnd NDC!");
                 });
             });
