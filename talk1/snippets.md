@@ -213,6 +213,8 @@ func hubConnectionHandler(connectionID string, ws *websocket.Conn) {
 # Send Server -> Client Pings
 
 ```go
+const pingMessage = "{\"type\":6}\u001e"
+
 ticker := time.NewTicker(10 * time.Second)
 done := make(chan bool)
 go func() {
@@ -277,7 +279,7 @@ for {
 	}
 }
 
-func onInvocation(invocationID string, target string, args []json.RawMessage) (interface{}, error) {
+func onInvocation(ws *websocket.Conn, invocationID string, target string, args []json.RawMessage) (interface{}, error) {
 	return nil, nil
 }
 ```
@@ -467,6 +469,12 @@ case 1, 4:
 ```
 
 ```go
+type streamItemMessage struct {
+	Type         int         `json:"type"`
+	InvocationID string      `json:"invocationId"`
+	Item         interface{} `json:"item"`
+}
+
 if target == "stream" {
 	go func() {
 		for index := 0; index < 10; index++ {
