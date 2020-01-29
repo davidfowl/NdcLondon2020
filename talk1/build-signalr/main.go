@@ -54,7 +54,7 @@ type streamItemMessage struct {
 }
 
 func main() {
-	http.Handle("/", http.FileServer(http.Dir("public")))
+	http.Handle("/", http.FileServer(http.Dir("wwwroot")))
 
 	mapHub("/chat")
 
