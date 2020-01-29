@@ -43,7 +43,7 @@ namespace BackEnd
 
             app.UseEndpoints(endpoints =>
             {
-                endpoints.MapGet("/", async context =>
+                endpoints.MapGet("/be", async context =>
                 {
                     await Task.Delay(2000);
                     await context.Response.WriteAsync("Hello BackEnd NDC!");

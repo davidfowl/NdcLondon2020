@@ -51,7 +51,7 @@ namespace FrontEnd
 
                 endpoints.MapGet("/", async context =>
                 {
-                    var content = await client.GetStringAsync("/");
+                    var content = await client.GetStringAsync("/be");
 
                     await context.Response.WriteAsync(content);
                 });
