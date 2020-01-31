@@ -51,6 +51,8 @@ func main() {
 		clientConnectionHandler(&clients, connectionID, ws, c)
 	}))
 
+	fmt.Println("Listening on localhost:8087")
+
 	http.ListenAndServe("localhost:8087", nil)
 }
 
@@ -79,17 +81,7 @@ func processHandshake(ws *websocket.Conn) error {
 
 		fmt.Printf("Protocol version: %d\n", version)
 
-		var buf bytes.Buffer
-		encoder := msgpack.NewEncoder(&buf)
-		encoder.EncodeArrayLen(2)
-		encoder.EncodeInt(2)
-		encoder.EncodeString("")
-
-		var message bytes.Buffer
-		lengthPrefix(&message, buf.Len())
-		buf.WriteTo(&message)
-
-		websocket.Message.Send(ws, message.Bytes())
+		writeHandshakeResponse(ws, "")
 		break
 	}
 
@@ -285,6 +277,21 @@ func clientConnectionHandler(clients *sync.Map, connectionID string, ws *websock
 	writeCloseConnectionMessage(connectionID, target)
 
 	clients.Delete(connectionID)
+}
+
+func writeHandshakeResponse(ws *websocket.Conn, errorMessage string) {
+	// https://github.com/Azure/azure-signalr/blob/dev/specs/ServiceProtocol.md#handshakeresponse-message
+	var buf bytes.Buffer
+	encoder := msgpack.NewEncoder(&buf)
+	encoder.EncodeArrayLen(2)
+	encoder.EncodeInt(2)
+	encoder.EncodeString(errorMessage)
+
+	var message bytes.Buffer
+	lengthPrefix(&message, buf.Len())
+	buf.WriteTo(&message)
+
+	websocket.Message.Send(ws, message.Bytes())
 }
 
 func writeOpenConnectionMessage(connectionID string, ws *websocket.Conn) {
