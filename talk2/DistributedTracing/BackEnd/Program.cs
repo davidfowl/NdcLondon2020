@@ -25,6 +25,7 @@ namespace BackEnd
                 .UseSerilog((context, logging) =>
                 {
                     logging.WriteTo.Seq("http://localhost:5341/");
+                    logging.WriteTo.Console();
                 })
                 .ConfigureWebHostDefaults(webBuilder =>
                 {
